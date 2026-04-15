@@ -1,0 +1,62 @@
+# 환경 변수 및 비밀키
+.env
+client_secret_*.json
+download_state.json
+
+# Claude 내부 파일
+.claude/
+
+# 실행파일 / 임시파일
+aihubshell
+"import os.py"
+
+# ONNX 모델 (대용량)
+onnx_models/
+
+# 데이터셋 원본 (대용량)
+바이블코딩/샘플데이터/
+바이블코딩/라벨링데이터/
+라벨링데이터-*/
+
+# 학습된 모델 가중치
+*.pth
+*.pt
+*.ckpt
+
+# 학습 출력물
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Node.js
+node_modules/
+frontend/dist/
+
+# 데이터셋 (용량이 크므로 제외)
+New_sample_3/
+infanface-public/images/
+data/300w/images/
+
+# 서버 로그
+server.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TensorBoard 로그
+log/
+runs/
