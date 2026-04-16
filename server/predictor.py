@@ -1,7 +1,7 @@
 from __future__ import annotations
 """
-감정인식 멀티모델 추론 관리자.
-output/ 하위 4개 학습 결과를 모두 로드해 단일/비교 추론 지원.
+감정인식 멀티모델 추론 관리자 (ONNX Runtime 기반).
+Vercel 배포용: torch 불필요, onnxruntime + opencv + numpy만 사용.
 """
 import base64
 import logging
@@ -11,12 +11,10 @@ import time
 
 import cv2
 import numpy as np
-import torch
-import torch.nn.functional as F
+import onnxruntime as ort
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from dataset import EMOTIONS as ALL_EMOTIONS, SAMPLE_EMOTIONS, apply_clahe, extract_edge
-from model import EmotionClassifier
+from dataset import EMOTIONS as ALL_EMOTIONS, SAMPLE_EMOTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +27,8 @@ FACE_CASCADE = cv2.CascadeClassifier(
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-# 4클래스 모델용
-EMOTIONS = SAMPLE_EMOTIONS  # ['기쁨', '당황', '분노', '상처']
-# 7클래스 모델용
-EMOTIONS_7 = ALL_EMOTIONS   # ['기쁨', '당황', '분노', '불안', '상처', '슬픔', '중립']
+EMOTIONS   = SAMPLE_EMOTIONS  # 4클래스 ['기쁨', '당황', '분노', '상처']
+EMOTIONS_7 = ALL_EMOTIONS     # 7클래스 ['기쁨', '당황', '분노', '불안', '상처', '슬픔', '중립']
 
 EMOTION_EMOJI = {
     '기쁨': '😄', '당황': '😳', '분노': '😡', '상처': '😢',
@@ -45,35 +41,35 @@ MODEL_REGISTRY = {
     'resnet18': {
         'label':       'ResNet-18 (강민구)',
         'description': '7개 감정 분류 · 실시간 추론 모델',
-        'ckpt':        'kang_mingoo/resnet18_emotion_best.pth',
+        'onnx':        'kang_mingoo/resnet18_emotion.onnx',
         'color':       '#22C55E',
         'val_acc':     0.82,
         'f1_per':      {e: 0.80 for e in EMOTIONS_7},
-        'num_classes': 7,
         'emotions':    EMOTIONS_7,
-        'backbone':    'resnet18',
+        'use_clahe':   False,
+        'use_edge':    False,
     },
     'mobilenet_v2': {
         'label':       'MobileNet-V2 (한유승)',
         'description': '7개 감정 분류 · 경량 모바일 모델',
-        'ckpt':        '한유승/best_emotion_model.pth',
+        'onnx':        '한유승/emotion_model.onnx',
         'color':       '#F59E0B',
         'val_acc':     0.0,
         'f1_per':      {e: 0.0 for e in EMOTIONS_7},
-        'num_classes': 7,
         'emotions':    EMOTIONS_7,
-        'backbone':    'mobilenet_v2',
+        'use_clahe':   False,
+        'use_edge':    False,
     },
     'efficientnet_v2_s': {
         'label':       'EfficientNetV2-S (신희원)',
         'description': '7개 감정 분류 · Acc 91.4%',
-        'ckpt':        '신희원/best_efficientnet_v2_s_clean.pth',
+        'onnx':        '신희원/best_efficientnet_v2_s.onnx',
         'color':       '#EC4899',
         'val_acc':     0.914,
         'f1_per':      {e: 0.91 for e in EMOTIONS_7},
-        'num_classes': 7,
         'emotions':    EMOTIONS_7,
-        'backbone':    'efficientnet_v2_s',
+        'use_clahe':   False,
+        'use_edge':    False,
     },
 }
 
@@ -91,106 +87,54 @@ PIPELINE_IMAGES = {
 
 class EmotionPredictor:
     def __init__(self, model_id: str):
-        self.model_id    = model_id
-        self.info        = MODEL_REGISTRY[model_id]
-        self.device      = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model       = None
-        self.use_clahe   = False
-        self.use_edge    = False
-        self.in_channels = 3
-        # 모델별 감정 리스트 (7클래스 vs 4클래스)
-        self.emotions    = self.info.get('emotions', EMOTIONS)
+        self.model_id  = model_id
+        self.info      = MODEL_REGISTRY[model_id]
+        self.session   = None
+        self.emotions  = self.info.get('emotions', EMOTIONS)
+        self.use_clahe = self.info.get('use_clahe', False)
+        self.use_edge  = self.info.get('use_edge', False)
 
     def load(self) -> bool:
-        ckpt_path = os.path.join(BASE_DIR, self.info['ckpt'])
-        if not os.path.isfile(ckpt_path):
-            logger.warning(f'[{self.model_id}] 체크포인트 없음: {ckpt_path}')
+        onnx_path = os.path.join(BASE_DIR, self.info['onnx'])
+        if not os.path.isfile(onnx_path):
+            logger.warning(f'[{self.model_id}] ONNX 파일 없음: {onnx_path}')
             return False
         try:
-            ckpt = torch.load(ckpt_path, map_location=self.device)
-
-            # ── raw state_dict 처리 (메타데이터 없는 .pth) ────────
-            is_raw = isinstance(ckpt, dict) and 'state_dict' not in ckpt \
-                     and any(k.startswith(('conv', 'layer', 'bn', 'features')) for k in ckpt.keys())
-
-            if is_raw:
-                backbone    = self.info.get('backbone', 'resnet18')
-                num_classes = self.info.get('num_classes', len(self.emotions))
-                self.in_channels = 3
-                self.use_clahe   = False
-                self.use_edge    = False
-
-                from model import build_model
-                self.model = build_model(
-                    num_classes, backbone, pretrained=False, in_channels=3
-                ).to(self.device)
-
-                # build_model converts fc → Sequential(Dropout, Linear)
-                # but raw ckpt has fc.weight / fc.bias → remap to fc.1.weight / fc.1.bias
-                remapped = {}
-                for k, v in ckpt.items():
-                    if k == 'fc.weight':
-                        remapped['fc.1.weight'] = v
-                    elif k == 'fc.bias':
-                        remapped['fc.1.bias'] = v
-                    else:
-                        remapped[k] = v
-                self.model.load_state_dict(remapped)
-            else:
-                # ── wrapped checkpoint 처리 ────────
-                backbone         = ckpt.get('backbone', 'densenet121')
-                num_classes      = ckpt.get('num_classes', len(self.emotions))
-                self.in_channels = ckpt.get('in_channels', 3)
-                self.use_clahe   = ckpt.get('use_clahe', False)
-                self.use_edge    = ckpt.get('use_edge', False)
-
-                self.model = EmotionClassifier(
-                    num_classes, backbone, pretrained=False, in_channels=self.in_channels
-                ).to(self.device)
-                self.model.load_state_dict(ckpt['state_dict'])
-
-            self.model.eval()
-            logger.info(f'[{self.model_id}] 로드 완료 (classes={len(self.emotions)}, raw={is_raw})')
+            self.session = ort.InferenceSession(
+                onnx_path,
+                providers=['CPUExecutionProvider'],
+            )
+            logger.info(f'[{self.model_id}] 로드 완료')
             return True
         except Exception as e:
             logger.error(f'[{self.model_id}] 로드 실패: {e}')
-            import traceback; traceback.print_exc()
             return False
 
     def predict(self, face_rgb: np.ndarray) -> dict:
         """face_rgb: (H, W, 3) uint8 → 감정 예측 결과."""
         face = cv2.resize(face_rgb, (224, 224))
 
-        if self.use_clahe:
-            face = apply_clahe(face)
-
-        face_f   = face.astype(np.float32) / 255.0
+        face_f    = face.astype(np.float32) / 255.0
         face_norm = (face_f - MEAN) / STD
-        rgb_tensor = torch.from_numpy(face_norm.transpose(2, 0, 1))  # (3, H, W)
-
-        if self.use_edge:
-            edge = extract_edge(face).astype(np.float32) / 255.0
-            edge_t = torch.from_numpy(edge).unsqueeze(0)
-            tensor = torch.cat([rgb_tensor, edge_t], dim=0)
-        else:
-            tensor = rgb_tensor
-
-        tensor = tensor.unsqueeze(0).to(self.device)
+        inp       = face_norm.transpose(2, 0, 1)[np.newaxis].astype(np.float32)  # (1, 3, H, W)
 
         t0 = time.time()
-        with torch.no_grad():
-            logits = self.model(tensor)
-            probs  = F.softmax(logits, dim=1)[0].cpu().numpy()
+        input_name = self.session.get_inputs()[0].name
+        logits = self.session.run(None, {input_name: inp})[0][0]  # (num_classes,)
         elapsed = (time.time() - t0) * 1000
 
-        emo_list = self.emotions
+        # softmax
+        e = np.exp(logits - logits.max())
+        probs = e / e.sum()
+
         pred_idx = int(probs.argmax())
+        emo_list = self.emotions
         return {
-            'emotion':    emo_list[pred_idx],
-            'emoji':      EMOTION_EMOJI.get(emo_list[pred_idx], '🤔'),
-            'confidence': float(probs[pred_idx]),
-            'scores':     {e: float(probs[i]) for i, e in enumerate(emo_list)},
-            'infer_ms':   round(elapsed, 1),
+            'emotion':     emo_list[pred_idx],
+            'emoji':       EMOTION_EMOJI.get(emo_list[pred_idx], '🤔'),
+            'confidence':  float(probs[pred_idx]),
+            'scores':      {em: float(probs[i]) for i, em in enumerate(emo_list)},
+            'infer_ms':    round(elapsed, 1),
             'num_classes': len(emo_list),
         }
 
@@ -200,7 +144,7 @@ class EmotionPredictor:
 def detect_and_crop(img_bgr: np.ndarray):
     """
     Haar Cascade로 가장 큰 얼굴 검출 + 10% 패딩 크롭.
-    반환: (bbox_or_None, face_bgr, face_b64)
+    반환: (bbox_or_None, face_rgb, face_b64)
     """
     gray  = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     faces = FACE_CASCADE.detectMultiScale(
@@ -208,7 +152,6 @@ def detect_and_crop(img_bgr: np.ndarray):
     )
 
     if len(faces) == 0:
-        # 얼굴 미검출 → 중앙 정사각형 크롭
         h, w = img_bgr.shape[:2]
         s = min(h, w)
         x1, y1 = (w - s) // 2, (h - s) // 2
@@ -227,7 +170,7 @@ def detect_and_crop(img_bgr: np.ndarray):
 
     _, buf = cv2.imencode('.jpg', face_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
     face_b64 = base64.b64encode(buf).decode('utf-8')
-    face_rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
+    face_rgb  = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
     return bbox, face_rgb, face_b64
 
 
@@ -265,7 +208,7 @@ class ModelManager:
 
     def predict_all(self, face_rgb: np.ndarray) -> list:
         results = []
-        for mid in MODEL_REGISTRY:   # 등록 순서 유지
+        for mid in MODEL_REGISTRY:
             if mid not in self.predictors:
                 continue
             res = self.predictors[mid].predict(face_rgb)
