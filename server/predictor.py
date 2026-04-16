@@ -6,15 +6,11 @@ Vercel 배포용: torch 불필요, onnxruntime + opencv + numpy만 사용.
 import base64
 import logging
 import os
-import sys
 import time
 
 import cv2
 import numpy as np
 import onnxruntime as ort
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from dataset import EMOTIONS as ALL_EMOTIONS, SAMPLE_EMOTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +23,9 @@ FACE_CASCADE = cv2.CascadeClassifier(
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-EMOTIONS   = SAMPLE_EMOTIONS  # 4클래스 ['기쁨', '당황', '분노', '상처']
-EMOTIONS_7 = ALL_EMOTIONS     # 7클래스 ['기쁨', '당황', '분노', '불안', '상처', '슬픔', '중립']
+# torch 의존성 없이 직접 정의
+EMOTIONS   = ['기쁨', '당황', '분노', '상처']                           # 4클래스
+EMOTIONS_7 = ['기쁨', '당황', '분노', '불안', '상처', '슬픔', '중립']   # 7클래스
 
 EMOTION_EMOJI = {
     '기쁨': '😄', '당황': '😳', '분노': '😡', '상처': '😢',
