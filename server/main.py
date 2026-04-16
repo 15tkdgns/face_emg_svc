@@ -51,13 +51,9 @@ async def startup():
 
 @app.get('/api/health')
 def health():
-    import torch
     return {
         'status':        'ok',
         'loaded_models': list(manager.predictors.keys()),
-        'device':        str(next(iter(manager.predictors.values())).device)
-                         if manager.predictors else 'none',
-        'cuda':          torch.cuda.is_available(),
     }
 
 
