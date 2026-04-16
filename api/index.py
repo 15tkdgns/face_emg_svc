@@ -19,17 +19,20 @@ app.add_middleware(
     allow_headers=['*'],
 )
 
+_load_error = None
+
 try:
-    # 전체 서버 로드 (onnxruntime + 모델)
     from server.main import app as _full_app
     app = _full_app
-except Exception as _e:
-    import logging
-    logging.getLogger(__name__).warning(f'Full server unavailable: {_e}')
+except Exception as e:
+    _load_error = str(e)
+    import traceback as _tb
+    _load_error = _tb.format_exc()
 
+if _load_error:
     @app.get('/api/health')
     def health():
-        return {'status': 'unavailable', 'reason': str(_e)}
+        return {'status': 'unavailable', 'reason': _load_error}
 
     @app.get('/api/models')
     def models():
