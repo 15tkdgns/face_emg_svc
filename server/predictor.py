@@ -41,7 +41,7 @@ MODEL_REGISTRY = {
     'resnet18': {
         'label':       'ResNet-18 (강민구)',
         'description': '7개 감정 분류 · 실시간 추론 모델',
-        'onnx':        'kang_mingoo/resnet18_emotion.onnx',
+        'onnx':        'models/resnet18.onnx',
         'color':       '#22C55E',
         'val_acc':     0.82,
         'f1_per':      {e: 0.80 for e in EMOTIONS_7},
@@ -52,7 +52,7 @@ MODEL_REGISTRY = {
     'mobilenet_v2': {
         'label':       'MobileNet-V2 (한유승)',
         'description': '7개 감정 분류 · 경량 모바일 모델',
-        'onnx':        '한유승/emotion_model.onnx',
+        'onnx':        'models/mobilenet_v2.onnx',
         'color':       '#F59E0B',
         'val_acc':     0.0,
         'f1_per':      {e: 0.0 for e in EMOTIONS_7},
@@ -63,7 +63,7 @@ MODEL_REGISTRY = {
     'efficientnet_v2_s': {
         'label':       'EfficientNetV2-S (신희원)',
         'description': '7개 감정 분류 · Acc 91.4%',
-        'onnx':        '신희원/best_efficientnet_v2_s.onnx',
+        'onnx':        'models/efficientnet_v2_s.onnx',
         'color':       '#EC4899',
         'val_acc':     0.914,
         'f1_per':      {e: 0.91 for e in EMOTIONS_7},
