@@ -3,7 +3,6 @@
   "outputDirectory": "frontend/dist",
   "functions": {
     "api/index.py": {
-      "runtime": "python3.12",
       "includeFiles": "server/**,models/**,dataset.py,model.py,losses.py"
     }
   },
