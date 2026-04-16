@@ -60,3 +60,5 @@ Thumbs.db
 # TensorBoard 로그
 log/
 runs/
+
+.vercel

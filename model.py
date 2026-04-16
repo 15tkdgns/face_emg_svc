@@ -73,6 +73,16 @@ def build_model(num_classes: int, backbone: str = 'efficientnet_b0',
         in_feat = model.fc.in_features
         model.fc = nn.Sequential(nn.Dropout(0.3), nn.Linear(in_feat, num_classes))
 
+    elif backbone == 'mobilenet_v2':
+        model = models.mobilenet_v2(weights=weights)
+        in_feat = model.classifier[1].in_features  # 1280
+        model.classifier = nn.Sequential(nn.Dropout(0.3), nn.Linear(in_feat, num_classes))
+
+    elif backbone == 'efficientnet_v2_s':
+        model = models.efficientnet_v2_s(weights=weights)
+        in_feat = model.classifier[1].in_features  # 1280
+        model.classifier = nn.Sequential(nn.Dropout(0.3), nn.Linear(in_feat, num_classes))
+
     else:
         raise ValueError(f'지원하지 않는 backbone: {backbone}')
 
