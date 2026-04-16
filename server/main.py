@@ -103,6 +103,8 @@ async def analyze(
         img_bgr = _decode_image(contents)
         logger.info(f'  decoded: shape={img_bgr.shape}')
         bbox, face_rgb, face_b64 = detect_and_crop(img_bgr)
+        if face_rgb is None:
+            raise HTTPException(status_code=400, detail='얼굴이 검출되지 않았습니다.')
         logger.info(f'  face: bbox={bbox} face_shape={face_rgb.shape}')
 
         result = manager.predict_one(model_id, face_rgb)
@@ -137,6 +139,8 @@ async def analyze_compare(file: UploadFile = File(...)):
         logger.info(f'compare: file={file.filename} size={len(contents)}')
         img_bgr = _decode_image(contents)
         bbox, face_rgb, face_b64 = detect_and_crop(img_bgr)
+        if face_rgb is None:
+            raise HTTPException(status_code=400, detail='얼굴이 검출되지 않았습니다.')
 
         results = manager.predict_all(face_rgb)
         if not results:
@@ -175,6 +179,8 @@ async def analyze_base64(payload: dict):
     img_bgr   = _decode_image(img_bytes)
 
     bbox, face_rgb, face_b64 = detect_and_crop(img_bgr)
+    if face_rgb is None:
+        raise HTTPException(status_code=400, detail='얼굴이 검출되지 않았습니다.')
 
     if compare:
         results = manager.predict_all(face_rgb)
@@ -296,6 +302,8 @@ async def analyze_custom(
 
         img_bgr = _decode_image(await file.read())
         bbox, face_rgb, face_b64 = detect_and_crop(img_bgr)
+        if face_rgb is None:
+            raise HTTPException(status_code=400, detail='얼굴이 검출되지 않았습니다.')
 
         # 전처리 (server/predictor.py 동일 로직)
         from dataset import apply_clahe, extract_edge

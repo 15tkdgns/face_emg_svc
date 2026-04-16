@@ -35,6 +35,7 @@ EMOTION_EMOJI = {
 # ── 모델 레지스트리 ────────────────────────────────────────────────────────────
 
 MODEL_REGISTRY = {
+    # ── 7클래스 팀원 모델 ──────────────────────────────────────────────────────
     'resnet18': {
         'label':       'ResNet-18 (강민구)',
         'description': '7개 감정 분류 · 실시간 추론 모델',
@@ -43,7 +44,6 @@ MODEL_REGISTRY = {
         'val_acc':     0.82,
         'f1_per':      {e: 0.80 for e in EMOTIONS_7},
         'emotions':    EMOTIONS_7,
-        'use_clahe':   False,
         'use_edge':    False,
     },
     'mobilenet_v2': {
@@ -54,19 +54,38 @@ MODEL_REGISTRY = {
         'val_acc':     0.0,
         'f1_per':      {e: 0.0 for e in EMOTIONS_7},
         'emotions':    EMOTIONS_7,
-        'use_clahe':   False,
         'use_edge':    False,
     },
-    'efficientnet_v2_s': {
-        'label':       'EfficientNetV2-S (신희원)',
-        'description': '7개 감정 분류 · Acc 91.4%',
-        'onnx':        'api/models/efficientnet_v2_s.onnx',
-        'color':       '#EC4899',
-        'val_acc':     0.914,
-        'f1_per':      {e: 0.91 for e in EMOTIONS_7},
-        'emotions':    EMOTIONS_7,
-        'use_clahe':   False,
+    # ── 4클래스 DenseNet 모델 (본인) ───────────────────────────────────────────
+    'densenet121': {
+        'label':       'DenseNet121',
+        'description': '4개 감정 분류 · 기본 전처리',
+        'onnx':        'api/models/densenet121.onnx',
+        'color':       '#4F86C6',
+        'val_acc':     0.8762,
+        'f1_per':      {'기쁨': 0.968, '당황': 0.902, '분노': 0.860, '상처': 0.828},
+        'emotions':    EMOTIONS,
         'use_edge':    False,
+    },
+    'densenet121_new': {
+        'label':       'DenseNet121 New',
+        'description': '4개 감정 분류 · 개선 학습',
+        'onnx':        'api/models/densenet121_new.onnx',
+        'color':       '#2E86AB',
+        'val_acc':     0.0,
+        'f1_per':      {e: 0.0 for e in EMOTIONS},
+        'emotions':    EMOTIONS,
+        'use_edge':    False,
+    },
+    'densenet121_clahe_edge': {
+        'label':       'DenseNet121 + Edge',
+        'description': '4개 감정 분류 · CLAHE + Canny 엣지 채널',
+        'onnx':        'api/models/densenet121_clahe_edge.onnx',
+        'color':       '#57B894',
+        'val_acc':     0.8476,
+        'f1_per':      {'기쁨': 0.959, '당황': 0.881, '분노': 0.813, '상처': 0.807},
+        'emotions':    EMOTIONS,
+        'use_edge':    True,
     },
 }
 
@@ -113,7 +132,14 @@ class EmotionPredictor:
 
         face_f    = face.astype(np.float32) / 255.0
         face_norm = (face_f - MEAN) / STD
-        inp       = face_norm.transpose(2, 0, 1)[np.newaxis].astype(np.float32)  # (1, 3, H, W)
+        chw       = face_norm.transpose(2, 0, 1)  # (3, H, W)
+
+        if self.use_edge:
+            gray = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY)
+            edge = cv2.Canny(gray, 100, 200).astype(np.float32) / 255.0
+            chw  = np.concatenate([chw, edge[np.newaxis]], axis=0)  # (4, H, W)
+
+        inp = chw[np.newaxis].astype(np.float32)  # (1, C, H, W)
 
         t0 = time.time()
         input_name = self.session.get_inputs()[0].name
@@ -141,7 +167,8 @@ class EmotionPredictor:
 def detect_and_crop(img_bgr: np.ndarray):
     """
     Haar Cascade로 가장 큰 얼굴 검출 + 10% 패딩 크롭.
-    반환: (bbox_or_None, face_rgb, face_b64)
+    반환: (bbox_or_None, face_rgb_or_None, face_b64_or_None)
+    얼굴 미검출 시 bbox=None, face_rgb=None, face_b64=None 반환.
     """
     gray  = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     faces = FACE_CASCADE.detectMultiScale(
@@ -149,11 +176,7 @@ def detect_and_crop(img_bgr: np.ndarray):
     )
 
     if len(faces) == 0:
-        h, w = img_bgr.shape[:2]
-        s = min(h, w)
-        x1, y1 = (w - s) // 2, (h - s) // 2
-        face_bgr = img_bgr[y1:y1 + s, x1:x1 + s]
-        bbox = None
+        return None, None, None
     else:
         x, y, fw, fh = max(faces, key=lambda f: f[2] * f[3])
         pad_x = int(fw * 0.1)
